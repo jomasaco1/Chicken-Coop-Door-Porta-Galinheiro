@@ -257,8 +257,12 @@ void syncRTCWithNTP(AsyncWebSocketClient *client) {
 }
 
 void setupWiFi() {
-  Serial.begin(115200);
-
+// Desconectar qualquer conexão Wi-Fi existente
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFi.disconnect();
+    delay(100); // Pequena pausa para garantir desconexão completa
+    logMessage("Conexão Wi-Fi anterior encerrada.");
+  }
   // Configurar modo Wi-Fi STA + AP
   WiFi.mode(WIFI_AP_STA);
 
@@ -433,6 +437,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
     // Validar e salvar credenciais Wi-Fi
     if (validateAndSave("wifi_ssid", ssid) && validateAndSave("wifi_pass", password)) {
       client->text("feedback:Credenciais Wi-Fi salvas com sucesso.");
+	setupWiFi();
     } else {
       client->text("feedback:Erro ao salvar credenciais Wi-Fi.");
     }
