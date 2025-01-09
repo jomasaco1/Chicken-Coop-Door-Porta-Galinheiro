@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Configuração de Rede e Relógio</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f9;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+        header {
+            background: #007bff;
+            color: white;
+            width: 100%;
+            padding: 10px 0;
+            text-align: center;
+        }
+        form {
+            background: white;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            width: 90%; /* Ajustar largura para telas menores */
+            max-width: 500px; /* Limite máximo para telas maiores */
+        }
+        select, input, button {
+            margin-bottom: 10px;
+            padding: 10px;
+            width: 100%;
+            font-size: 16px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            box-sizing: border-box; /* Evita problemas de dimensionamento */
+        }
+        button {
+            color: white;
+            background: #007bff;
+            border: none;
+            cursor: pointer;
+        }
+        .feedback {
+            margin-top: 20px;
+            padding: 10px;
+            background: #f8f9fa;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            width: 90%; /* Ajustar largura */
+            max-width: 500px;
+            color: #333;
+        }
+        @media (max-width: 600px) {
+            form {
+                padding: 15px; /* Reduzir padding em telas menores */
+            }
+            button {
+                font-size: 14px; /* Reduzir tamanho da fonte em botões */
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Configuração de Rede e Relógio</h1>
+    </header>
+	    <div id="current_time" style="margin-bottom: 20px; font-size: 18px; font-weight: bold; color: #007bff;">
+        Data e Hora Atual: Carregando...
+    </div>
+	    <div id="local_ip" class="info">IP Local: Carregando...</div>
+
+    <form id="configForm">
+        <input type="date" id="rtc_date" placeholder="dd/mm/aaaa">
+		<input type="time" id="rtc_time" placeholder="hh:mm:ss">
+
+
+        <button type="button" onclick="ajustarRelógio()">Ajustar Relógio</button>
+        <button type="button" onclick="sincronizarNTP()">Sincronizar com NTP</button>
+
+        <hr>
+
+        <label for="wifi_ssid">Rede Wi-Fi:</label>
+        <select id="wifi_ssid">
+            <option value="">Selecionar...</option>
+        </select>
+
+        <label for="wifi_password">Senha Wi-Fi:</label>
+        <input type="password" id="wifi_password" placeholder="Digite a senha">
+
+        <button type="button" onclick="salvarWifi()">Salvar Rede Wi-Fi</button>
+        <br>
+        <button type="button" onclick="voltarPaginaInicial()">Voltar à Página Inicial</button>
+    </form>
+
+    <div id="feedback" class="feedback">Status: Aguardando ações...</div>
+
+    <script>
+        const gateway = `ws://${window.location.hostname}/ws`;
+        let websocket;
+        let serverTime;
+		let isWebSocketConnected = false;
+
+        window.addEventListener('load', () => {
+            initWebSocket();
+            setTimeout(() => websocket.send('querohoras:'), 1000); // Solicitar data e hora ao carregar
+            setTimeout(() => websocket.send('scanWifi'), 2000); // Solicitar redes Wi-Fi ao carregar
+			setTimeout(() => websocket.send('getLocalIP'), 3000); // Solicitar IP local ao carregar
+        });
+
+        function initWebSocket() {
+		    if (isWebSocketConnected) return; // Evitar múltiplas conexões
+            websocket = new WebSocket(gateway);
+			websocket.onopen = () => {
+        console.log('Conectado ao WebSocket');
+        isWebSocketConnected = true;
+    };
+    websocket.onclose = () => {
+        isWebSocketConnected = false;
+        setTimeout(initWebSocket, 2000);
+    };
+            websocket.onmessage = (event) => handleServerMessage(event.data);
+        }
+
+        function handleServerMessage(message) {
+                 if (message.startsWith('enviodatahoras:')) {
+        const [date, time] = message.replace('enviodatahoras: ', '').split(' ');
+
+        // Converter data de dd/mm/yyyy para yyyy-mm-dd
+        const [day, month, year] = date.split('/');
+        const formattedDate = `${year}-${month}-${day}`;
+
+        // Atualizar exibição de data e hora recebidas
+        document.getElementById('current_time').innerText = 
+            `Data e Hora Atual: ${date} ${time}`;
+
+        // Criar objeto Date usando UTC para evitar ajustes automáticos
+        serverTime = new Date(`${formattedDate}T${time}Z`);
+
+        // Iniciar o relógio local
+        startClock();
+    }  else if (message.startsWith('localIP:')) {
+                const ip = message.replace('localIP: ', '');
+                document.getElementById('local_ip').innerText = `IP Local: ${ip}`;
+            } else if (message.startsWith('wifiList:')) {
+                const networks = message.replace('wifiList:', '').split(',');
+                const wifiSelect = document.getElementById('wifi_ssid');
+                wifiSelect.innerHTML = '<option value="">Selecionar...</option>'; // Resetar
+                networks.forEach(network => {
+                    const option = document.createElement('option');
+                    option.value = network;
+                    option.textContent = network;
+                    wifiSelect.appendChild(option);
+                });
+            } else if (message.startsWith('feedback:')) {
+                document.getElementById('feedback').innerText = message.replace('feedback:', '');
+            } else {
+                console.log('Mensagem desconhecida do servidor:', message);
+            }
+        }
+
+        function ajustarRelógio() {
+    const date = document.getElementById('rtc_date').value;
+    const time = document.getElementById('rtc_time').value;
+
+    // Adicionar logs para depuração
+    console.log('Data inserida:', date);
+    console.log('Hora inserida:', time);
+if (!date || !time) {
+        document.getElementById('feedback').innerText = 'Por favor, preencha data e hora corretamente.';
+        return;
+    }
+    if (date && time) {
+        const message = `setRTC:${date} ${time}`;
+        console.log('Mensagem enviada ao backend:', message); // Log do comando enviado
+        websocket.send(message);
+        document.getElementById('feedback').innerText = 'Comando para ajustar relógio enviado.';
+    } else {
+        document.getElementById('feedback').innerText = 'Por favor, preencha data e hora corretamente.';
+    }
+}
+        function sincronizarNTP() {
+            websocket.send('syncNTP');
+            document.getElementById('feedback').innerText = 'Comando para sincronizar com NTP enviado.';
+        }
+
+        function salvarWifi() {
+    const ssid = document.getElementById('wifi_ssid').value;
+    const password = document.getElementById('wifi_password').value;
+    if (ssid.length < 1) {
+        document.getElementById('feedback').innerText = 'SSID não pode estar vazio.';
+        return;
+    }
+    if (password.length < 8) {
+        document.getElementById('feedback').innerText = 'Senha deve ter pelo menos 8 caracteres.';
+        return;
+    }
+    websocket.send(`setWifi:${ssid},${password}`);
+    document.getElementById('feedback').innerText = 'Comando para salvar Wi-Fi enviado.';
+}
+
+        function voltarPaginaInicial() {
+            window.location.href = '/';
+        }
+
+        function startClock() {
+            clearInterval(window.clockInterval); // Limpar qualquer intervalo anterior
+            window.clockInterval = setInterval(() => {
+                serverTime.setSeconds(serverTime.getSeconds() + 1);
+
+                // Atualizar exibição de data e hora atual
+                const formattedDate = serverTime.toISOString().substr(0, 10).split('-').reverse().join('/');
+                const formattedTime = serverTime.toISOString().substr(11, 8);
+                document.getElementById('current_time').innerText = `Data e Hora Atual: ${formattedDate} ${formattedTime}`;
+            }, 1000);
+        }
+    </script>
+</body>
+</html>
