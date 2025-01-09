@@ -1,3 +1,9 @@
+// Create your won APIS KEYS AND REPLACE THE URLS
+// Autor: jomasaco
+// Projeto: Controlo Galinheiro
+// Descrição: Sistema automatizado para controle de porta e comedouro de galinheiro
+// Data: Janeiro de 2025
+
 #include <WiFi.h>
 #include <Preferences.h>
 #include <time.h>
@@ -5,15 +11,17 @@
 #include <SPIFFS.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
-
+#define AUTOR "jomasaco"
 const int relayPinFeedUp = 32;  // Pino do relay para subir o comedouro
 const int relayPinFeedDown = 33; // Pino do relay para descer o comedouro
 const int relayPinOpen = 25;        // Pino do relay para abrir a porta
 const int relayPinClose = 26;       // Pino do relay para fechar a porta
-const int ledPin = 23; // Define o pino do LED
+const int ledPin = 23; // Define o pino do LED Blink when Active can be replaced by an buzzer
 
-const char* API_1 = "http://api.open-meteo.com/v1/forecast?latitude=49.5677&longitude=5.8331&current=temperature_2m,is_day&daily=sunrise,sunset&timeformat=unixtime&timezone=Europe%2FBerlin&forecast_days=1";
-const char* API_2 = "http://api.openweathermap.org/data/2.5/weather?id=2803073&appid=751ff69d859cad7734e1a490975e0a61&units=metric";
+const char* API_1 = "http://api.open-meteo.com/v1/forecast?latitude=XX.XXX&longitude=U.YYY&current=temperature_2m,is_day&daily=sunrise,sunset&timeformat=unixtime&timezone=Europe%2FBerlin&forecast_days=1"; 
+// Substituir XX.XXX e U.YYY pelas coordenadas reais.
+const char* API_2 = "http://api.openweathermap.org/data/2.5/weather?id=2803073&appid=YOUR_API_KEY&units=metric"; 
+// Substituir YOUR_API_KEY pela chave de API real.
 
 // Struct do Galinheiro
 struct Galinheiro {   // 11 elementos
@@ -75,7 +83,7 @@ void logMessage(float value) {
 // Função para converter __DATE__ e __TIME__ em timestamp Unix
 unsigned long getBuildTimestamp() {
   struct tm buildTime;
-  strptime(__DATE__ " " __TIME__, "%b %d %Y %H:%M:%S", &buildTime);
+  strptime(__DATE__ " " __TIME__, "%b %d %Y %H:%M:%S", &buildTime);   //To iniciate time whit something
   return mktime(&buildTime);
 }
 
