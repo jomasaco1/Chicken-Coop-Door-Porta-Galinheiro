@@ -305,8 +305,8 @@ void loadGalinheiroData(Galinheiro &data) {
   data.tpf = preferences.getUInt("tpf", 20);
   data.tcs = preferences.getUInt("tcs", 10);
   data.tcd = preferences.getUInt("tcd", 10);
-  data.wifi_ssid = preferences.getString("wifi_ssid", "Orange-49fmR");
-  data.wifi_pass = preferences.getString("wifi_pass", "SPH8JyTGVwDqWJ5");
+  data.wifi_ssid = preferences.getString("wifi_ssid", ""); // empty will be created by interface
+  data.wifi_pass = preferences.getString("wifi_pass", "");  //empty must be inserted in interface
 
   // Validações
   if (data.temp_api < -20.0 || data.temp_api > 45.0) data.temp_api = 7.0;
