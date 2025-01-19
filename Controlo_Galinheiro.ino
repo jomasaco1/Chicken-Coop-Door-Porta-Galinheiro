@@ -9,11 +9,14 @@
 #include <time.h>
 #include <ESPAsyncWebServer.h>
 #include <SPIFFS.h>
-#include <ArduinoJson.h>
+#include <ArduinoJson.h>  ////V5
 #include <HTTPClient.h>
 #include <TinyGPSPlus.h>
 #include <HardwareSerial.h>
+#include <Update.h>
 
+const char* Versao = "0.1";
+const char* Autor = "jomasaco";
 const int relayPinFeedUp = 32;  // Pino do relay para subir o comedouro
 const int relayPinFeedDown = 33; // Pino do relay para descer o comedouro
 const int relayPinOpen = 25;        // Pino do relay para abrir a porta
@@ -40,6 +43,7 @@ Preferences preferences;
 // Variáveis do RTC interno
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
+bool otaInProgress = false;
 
 char* ntpServer = "pool.ntp.org";
 long gmtOffset_sec = 3600;
@@ -64,15 +68,15 @@ int horaPor = 18;
 int horaNascer = 6;
 
 // Coordenadas padrão
-const double defaultLatitude = 49.5677;  //default coordenates chose yours
+const double defaultLatitude = 49.5677;  // Default coordenates usedas fallback
 const double defaultLongitude = 5.8331;
-double currentLatitude = defaultLatitude;  //got from gps or get by default
+double currentLatitude = defaultLatitude;
 double currentLongitude = defaultLongitude;
 // CityID padrão
-const String defaultCityID = "2803073"; // Arlon, Belgium
+const String defaultCityID = "2803073"; // Ettelbruck, Luxemburgo
 String currentCityID = defaultCityID;
 // Chave da API (configurável globalmente)
-const char* apiKey = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";  //openweathermap YOUR API KEY
+const char* apiKey = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";  //openweathermap YOUR API KEY COME HERE
 
 
 void initGPS() {
@@ -200,8 +204,11 @@ String buildWeatherAPIURL(const char* baseURL, bool useCityID = false) {
                  "%s?latitude=%.6f&longitude=%.6f&current=temperature_2m,is_day&daily=sunrise,sunset&timeformat=unixtime&timezone=auto&forecast_days=1",
                  baseURL, currentLatitude, currentLongitude);
     }
+
     return String(url);
 }
+
+
 
 int extrairHora(unsigned long timestamp) {
   time_t t = timestamp;
@@ -476,7 +483,7 @@ void loadGalinheiroData(Galinheiro &data) {
 }
 
 bool validateAndSave(String key, String value) {
-    Serial.println("Chave: " + key + ", Valor recebido: " + value + " em validateAndSave");
+	logMessage("Chave: " + key + ", Valor recebido: " + value + " em validateAndSave");
     preferences.begin("galinheiro", false); // Abrir para escrita
     bool isSaved = false;
 
@@ -650,10 +657,86 @@ bool fetchData(const char* url, float &temp, unsigned long &nascer, unsigned lon
     return false;
 }
 
+void setupFileUpload() {
+    server.on("/upload", HTTP_POST, [](AsyncWebServerRequest *request) {
+        request->send(200, "text/plain", "Upload concluído.");
+    }, [](AsyncWebServerRequest *request, const String &filename, size_t index, uint8_t *data, size_t len, bool final) {
+        if (index == 0) {
+            Serial.printf("Recebendo arquivo: %s\n", filename.c_str());
+            // Abre o arquivo no SPIFFS para escrita
+            if (!SPIFFS.open("/" + filename, "w")) {
+                Serial.println("Erro ao abrir arquivo para escrita.");
+                return;
+            }
+        }
+
+        // Escreve os dados do arquivo
+        File file = SPIFFS.open("/" + filename, "a");
+        if (file) {
+            file.write(data, len);
+            file.close();
+        } else {
+            Serial.println("Erro ao escrever no arquivo.");
+        }
+
+        if (final) {
+            Serial.printf("Upload concluído: %s\n", filename.c_str());
+        }
+    });
+}
+
+void listFiles() {
+    Serial.println("Arquivos disponíveis no SPIFFS:");
+    File root = SPIFFS.open("/");
+    File file = root.openNextFile();
+    while (file) {
+        Serial.printf("Arquivo: %s, Tamanho: %d bytes\n", file.name(), file.size());
+        file = root.openNextFile();
+    }
+}
+
+void setupOTA() {
+    server.on("/update", HTTP_POST, [](AsyncWebServerRequest *request) {
+        // Finaliza o upload e verifica se houve erro
+        if (Update.hasError()) {
+            request->send(500, "text/plain", "Atualização falhou.");
+        } else {
+            request->send(200, "text/plain", "Atualização bem-sucedida. Reiniciando...");
+            ESP.restart();
+        }
+    }, [](AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final) {
+        if (index == 0) {
+            Serial.printf("Iniciando atualização: %s\n", filename.c_str());
+            if (!Update.begin(UPDATE_SIZE_UNKNOWN)) { // Inicia o OTA
+                Update.printError(Serial);
+            }
+        }
+
+        // Escreve os dados do arquivo
+        if (Update.write(data, len) != len) {
+            Update.printError(Serial);
+        }
+
+        if (final) { // Finaliza o upload
+            if (Update.end(true)) {
+                Serial.printf("Atualização concluída com sucesso: %s\n", filename.c_str());
+            } else {
+                Update.printError(Serial);
+            }
+        }
+    });
+
+    Serial.println("OTA configurado em /update");
+}
+
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocketClient *client) {
   String message = String((char *)data).substring(0, len);
 
-  if (message.startsWith("querohoras:")) {
+if (message.startsWith("info:")) {
+        String response = String("autversion:") + Autor + " | " + Versao;
+        client->text(response);
+    }
+ else if (message.startsWith("querohoras:")) {
     time_t now = time(nullptr);
     printDateTime(now, client);
   } else if (message == "toggleModo") {
@@ -794,8 +877,10 @@ void setup() {
     syncRTCWithNTP(nullptr); // Sincronizar RTC com NTP sem cliente WebSocket
   }
   // Configurar WebSocket
-  initWebSocket();
-
+    initWebSocket();
+    server.begin();
+    setupOTA();
+	setupFileUpload();
   // Configurar servidor para servir arquivos do SPIFFS
   server.serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
   server.serveStatic("/ajustes", SPIFFS, "/ajustes.html")
@@ -804,8 +889,9 @@ void setup() {
   server.serveStatic("/config", SPIFFS, "/config.html")
   .setDefaultFile("config.html")
   .setCacheControl("no-cache, no-store, must-revalidate");
-
-  server.begin();
+server.serveStatic("/upgrade", SPIFFS, "/upgrade.html")
+  .setDefaultFile("upgrade.html")
+  .setCacheControl("no-cache, no-store, must-revalidate");
   // Exibir a hora atual
   logMessage("Hora atual: ");
   printDateTime(time(nullptr));
@@ -826,6 +912,7 @@ void setup() {
 
 void loop() {
   ws.cleanupClients();
+      if (!otaInProgress) {
   verificarPorta();     // Verificar temporização da porta
   verificarComedouro(); // Verificar temporização do comedouro
   checkAndUpdateData();
@@ -841,6 +928,7 @@ void loop() {
     }
     lastCheck = millis();
   }
+	} ///End Ota
 }
 
 void piscarLed() {
@@ -1001,7 +1089,7 @@ logMessage("Temperatura Configurada: " + String(galinheiro.temp_config));
 }
 
 bool isValidTimestamp(time_t timestamp) {
-    // 1. Verificar se o timestamp é maior ou igual ao build timestamp
+    // 1. Verificar se o timestamp é maior ao build timestamp
     if (timestamp < getBuildTimestamp()) {
         return false;
     }
