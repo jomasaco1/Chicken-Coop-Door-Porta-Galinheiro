@@ -11,17 +11,14 @@
 #include <SPIFFS.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
-#define AUTOR "jomasaco"
+#include <TinyGPSPlus.h>
+#include <HardwareSerial.h>
+
 const int relayPinFeedUp = 32;  // Pino do relay para subir o comedouro
 const int relayPinFeedDown = 33; // Pino do relay para descer o comedouro
 const int relayPinOpen = 25;        // Pino do relay para abrir a porta
 const int relayPinClose = 26;       // Pino do relay para fechar a porta
-const int ledPin = 23; // Define o pino do LED Blink when Active can be replaced by an buzzer
-
-const char* API_1 = "http://api.open-meteo.com/v1/forecast?latitude=XX.XXX&longitude=U.YYY&current=temperature_2m,is_day&daily=sunrise,sunset&timeformat=unixtime&timezone=Europe%2FBerlin&forecast_days=1"; 
-// Substituir XX.XXX e U.YYY pelas coordenadas reais.
-const char* API_2 = "http://api.openweathermap.org/data/2.5/weather?id=2803073&appid=YOUR_API_KEY&units=metric"; 
-// Substituir YOUR_API_KEY pela chave de API real.
+const int ledPin = 23; // Define o pino do LED
 
 // Struct do Galinheiro
 struct Galinheiro {   // 11 elementos
@@ -37,7 +34,6 @@ struct Galinheiro {   // 11 elementos
   String wifi_ssid;      // Nome da rede Wi-Fi configurada (SSID)
   String wifi_pass;      // Senha da rede Wi-Fi configurada
 };
-
 Galinheiro galinheiro;
 Preferences preferences;
 
@@ -48,7 +44,12 @@ AsyncWebSocket ws("/ws");
 char* ntpServer = "pool.ntp.org";
 long gmtOffset_sec = 3600;
 int daylightOffset_sec = 3600;
-
+ ///////////GPS/////////
+TinyGPSPlus gps;
+HardwareSerial gpsSerial(0);
+bool gpsTimeAvailable = false;
+time_t gpsTimestamp;
+/////////Fim GPS///////////
 
 bool portaAberta = false;           // Estado da porta
 bool modoManual = true; // Modo padrão: Manual
@@ -61,6 +62,146 @@ unsigned long tempoInicialManual = 0; // Registro do tempo em que o sistema entr
 const unsigned long limiteModoManual = 3600000; // 1 hora em milissegundos
 int horaPor = 18;
 int horaNascer = 6;
+
+// Coordenadas padrão
+const double defaultLatitude = 49.5677;  //default coordenates chose yours
+const double defaultLongitude = 5.8331;
+double currentLatitude = defaultLatitude;  //got from gps or get by default
+double currentLongitude = defaultLongitude;
+// CityID padrão
+const String defaultCityID = "2803073"; // Arlon, Belgium
+String currentCityID = defaultCityID;
+// Chave da API (configurável globalmente)
+const char* apiKey = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";  //openweathermap YOUR API KEY
+
+
+void initGPS() {
+    gpsSerial.begin(9600, SERIAL_8N1, 3, 1); // RX=GPIO3, TX=GPIO1
+    Serial.println("GPS inicializado.");
+}
+
+bool getGPSData(double &latitude, double &longitude, time_t &timestamp) {
+    while (gpsSerial.available() > 0) {
+        gps.encode(gpsSerial.read());
+    }
+
+    if (gps.location.isValid() && gps.date.isValid() && gps.time.isValid()) {
+        currentLatitude = gps.location.lat();
+        currentLongitude = gps.location.lng();
+
+        struct tm gpsTime;
+        gpsTime.tm_year = gps.date.year() - 1900;
+        gpsTime.tm_mon = gps.date.month() - 1;
+        gpsTime.tm_mday = gps.date.day();
+        gpsTime.tm_hour = gps.time.hour();
+        gpsTime.tm_min = gps.time.minute();
+        gpsTime.tm_sec = gps.time.second();
+        timestamp = mktime(&gpsTime);
+
+        return true;
+    }
+    return false;
+}
+
+void syncRTCWithGPS() {
+    time_t gpsTime;
+
+    if (getGPSData(currentLatitude, currentLongitude, gpsTime)) {
+        if (gpsTime > getBuildTimestamp()) {
+            struct timeval tv = { gpsTime, 0 };
+            settimeofday(&tv, nullptr);
+            gpsTimeAvailable = true;
+            Serial.printf("RTC sincronizado com GPS: %lld\n", gpsTime);
+            Serial.printf("Coordenadas: Latitude %.6f, Longitude %.6f\n", currentLatitude, currentLongitude);
+        } else {
+            Serial.println("Dados do GPS inválidos para sincronização.");
+        }
+    } else {
+        Serial.println("Sinal GPS indisponível ou insuficiente.");
+    }
+}
+
+void updateCoordinates() {
+    time_t gpsTimestamp;
+    // Atualizar coordenadas usando GPS ou fallback para valores padrão
+    if (getGPSData(currentLatitude, currentLongitude, gpsTimestamp)) {
+        Serial.printf("Coordenadas atualizadas com GPS: Latitude %.6f, Longitude %.6f\n", currentLatitude, currentLongitude);
+    } else {
+        currentLatitude = defaultLatitude;
+        currentLongitude = defaultLongitude;
+        Serial.println("Falha ao obter coordenadas do GPS. Usando valores padrão.");
+    }
+    // Atualizar o CityID dinamicamente ou usar fallback
+    if (WiFi.status() == WL_CONNECTED) {
+        String cityID = getCityID(currentLatitude, currentLongitude);
+        if (!cityID.isEmpty()) {
+            currentCityID = cityID;
+            Serial.printf("CityID atualizado dinamicamente: %s\n", currentCityID.c_str());
+            return;
+        }
+    }
+    // Fallback para CityID padrão
+    currentCityID = defaultCityID;
+    Serial.println("Falha ao atualizar CityID. Usando valor padrão.");
+}
+
+
+String getCityID(double latitude, double longitude) {
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("Sem conexão com Wi-Fi. Não é possível obter cityID.");
+        return defaultCityID; // Fallback para CityID padrão
+    }
+
+    HTTPClient http;
+    char url[256];
+    snprintf(url, sizeof(url),
+             "http://api.openweathermap.org/data/2.5/find?lat=%.6f&lon=%.6f&cnt=1&appid=%s",
+             latitude, longitude, apiKey);
+
+    http.begin(url);
+    int httpCode = http.GET();
+
+    if (httpCode == HTTP_CODE_OK) {
+        String payload = http.getString();
+        StaticJsonBuffer<1024> jsonBuffer; // Versão 5
+        JsonObject& root = jsonBuffer.parseObject(payload);
+
+        if (!root.success()) {
+            Serial.println("Falha ao analisar resposta da API para cityID.");
+            http.end();
+            return defaultCityID; // Fallback
+        }
+
+        if (root["list"][0]["id"]) {
+            int cityID = root["list"][0]["id"];
+            Serial.printf("CityID encontrado: %d\n", cityID);
+            http.end();
+            return String(cityID);
+        } else {
+            Serial.println("CityID não encontrado no JSON.");
+        }
+    } else {
+        Serial.printf("Erro na requisição para cityID. Código HTTP: %d\n", httpCode);
+    }
+
+    http.end();
+    return defaultCityID; // Fallback para ID fixo
+}
+
+String buildWeatherAPIURL(const char* baseURL, bool useCityID = false) {
+    char url[256];
+
+    if (useCityID) {
+        snprintf(url, sizeof(url),
+                 "%s?id=%s&appid=%s&units=metric",
+                 baseURL, currentCityID.c_str(), apiKey);
+    } else {
+        snprintf(url, sizeof(url),
+                 "%s?latitude=%.6f&longitude=%.6f&current=temperature_2m,is_day&daily=sunrise,sunset&timeformat=unixtime&timezone=auto&forecast_days=1",
+                 baseURL, currentLatitude, currentLongitude);
+    }
+    return String(url);
+}
 
 int extrairHora(unsigned long timestamp) {
   time_t t = timestamp;
@@ -83,7 +224,7 @@ void logMessage(float value) {
 // Função para converter __DATE__ e __TIME__ em timestamp Unix
 unsigned long getBuildTimestamp() {
   struct tm buildTime;
-  strptime(__DATE__ " " __TIME__, "%b %d %Y %H:%M:%S", &buildTime);   //To iniciate time whit something
+  strptime(__DATE__ " " __TIME__, "%b %d %Y %H:%M:%S", &buildTime);
   return mktime(&buildTime);
 }
 
@@ -126,7 +267,6 @@ void adjustTimeZone() {
     Serial.println("Falha ao obter o tempo local para ajuste.");
   }
 }
-
 
 void handleSetRTC(String dataHora, AsyncWebSocketClient *client) {
   Serial.println("Data e Hora recebidas: " + dataHora);
@@ -227,9 +367,9 @@ void enviarEstado(AsyncWebSocketClient *client = nullptr) {
   }
 }
 
-
 void syncRTCWithNTP(AsyncWebSocketClient *client) {
   if (WiFi.status() != WL_CONNECTED) {
+    syncRTCWithGPS(); // Fallback para GPS
     if (client) client->text("feedback:Wi-Fi não conectado. Abortando sincronização com NTP.");
     else logMessage("Wi-Fi não conectado. Abortando sincronização com NTP.");
     return;
@@ -257,12 +397,6 @@ void syncRTCWithNTP(AsyncWebSocketClient *client) {
 }
 
 void setupWiFi() {
-// Desconectar qualquer conexão Wi-Fi existente
-  if (WiFi.status() == WL_CONNECTED) {
-    WiFi.disconnect();
-    delay(100); // Pequena pausa para garantir desconexão completa
-    logMessage("Conexão Wi-Fi anterior encerrada.");
-  }
   // Configurar modo Wi-Fi STA + AP
   WiFi.mode(WIFI_AP_STA);
 
@@ -309,8 +443,8 @@ void loadGalinheiroData(Galinheiro &data) {
   data.tpf = preferences.getUInt("tpf", 20);
   data.tcs = preferences.getUInt("tcs", 10);
   data.tcd = preferences.getUInt("tcd", 10);
-  data.wifi_ssid = preferences.getString("wifi_ssid", ""); // empty will be created by interface
-  data.wifi_pass = preferences.getString("wifi_pass", "");  //empty must be inserted in interface
+  data.wifi_ssid = preferences.getString("wifi_ssid", "");
+  data.wifi_pass = preferences.getString("wifi_pass", "");
 
   // Validações
   if (data.temp_api < -20.0 || data.temp_api > 45.0) data.temp_api = 7.0;
@@ -378,6 +512,144 @@ bool validateAndSave(String key, String value) {
     return isSaved;
 }
 
+void checkAndUpdateData(bool forceUpdate = false) {
+    // Obter o timestamp atual do RTC interno
+    unsigned long currentTime = getRTCTime();
+    if (!isValidTimestamp(currentTime)) {
+        Serial.println("Erro: Timestamp inválido obtido do RTC.");
+        return;
+    }
+
+  // Verificar se já se passaram 4 horas desde a última atualização, exceto em caso de atualização forçada
+    if (!forceUpdate && currentTime - galinheiro.last_update < 14400) { // 14400 segundos = 4 horas
+        return;
+    }
+
+  // Verificar conexão com a internet
+   if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("Sem conexão com a internet. Usando GPS para atualizar dados...");
+
+        if (getGPSData(currentLatitude, currentLongitude, gpsTimestamp)) {
+            // Atualizar RTC com dados do GPS
+            if (gpsTimestamp > getBuildTimestamp()) {
+                struct timeval tv = { gpsTimestamp, 0 };
+                settimeofday(&tv, nullptr);
+                Serial.printf("RTC atualizado com GPS: %lld\n", gpsTimestamp);
+                Serial.printf("Coordenadas GPS: Latitude %.6f, Longitude %.6f\n", currentLatitude, currentLongitude);
+            } else {
+                Serial.println("Dados do GPS inválidos. Mantendo RTC atual.");
+            }
+        } else {
+            Serial.println("Sinal GPS indisponível ou insuficiente.");
+        }
+
+        galinheiro.last_update = currentTime;
+        validateAndSave("last_update", String(currentTime));
+        return;
+    }
+  adjustTimeZone();
+  syncRTCWithNTP(nullptr); // Sincronizar RTC com NTP sem cliente WebSocket
+    updateCoordinates(); // Atualiza coordenadas e cityID
+	// Gerar URLs dinamicamente
+    String weatherURL1 = buildWeatherAPIURL("http://api.open-meteo.com/v1/forecast", false);
+    String weatherURL2 = buildWeatherAPIURL("http://api.openweathermap.org/data/2.5/weather", true);
+
+// Debug: Imprimir URLs no console
+Serial.println("URL gerada para Open-Meteo:");
+Serial.println(weatherURL1);
+
+Serial.println("URL gerada para OpenWeatherMap:");
+Serial.println(weatherURL2);
+  // Tentar obter dados de ambas as APIs
+  float temp;
+  unsigned long nascer, por;
+  bool dataValida = false;
+
+  if (fetchData(weatherURL1.c_str(), temp, nascer, por)) {
+        dataValida = validateData(temp, nascer, por);
+    }
+
+    if (!dataValida && fetchData(weatherURL2.c_str(), temp, nascer, por)) {
+        dataValida = validateData(temp, nascer, por);
+    }
+
+  // Se os dados forem válidos, atualizar a estrutura e salvar em memória
+  if (dataValida) {
+    galinheiro.temp_api = temp;
+    galinheiro.nascer = nascer;
+    galinheiro.por = por;
+    galinheiro.last_update = currentTime;
+
+    validateAndSave("temp_api", String(temp));
+    validateAndSave("nascer", String(nascer));
+    validateAndSave("por", String(por));
+    validateAndSave("last_update", String(currentTime));
+    horaPor = extrairHora(por);
+    horaNascer = extrairHora(nascer);
+    Serial.println("Dados atualizados e salvos com sucesso.");
+  } else {
+    // Atualizar apenas o timestamp da última verificação se os dados não forem válidos
+    Serial.println("Falha ao obter dados válidos de ambas as APIs. Apenas o timestamp foi atualizado.");
+    galinheiro.last_update = currentTime;
+    validateAndSave("last_update", String(currentTime));
+  }
+}
+
+bool fetchData(const char* url, float &temp, unsigned long &nascer, unsigned long &por) {
+    HTTPClient http;
+    http.begin(url);
+    http.setTimeout(5000); // 5 segundos
+    int httpCode = http.GET();
+
+    if (httpCode == HTTP_CODE_OK) {
+        String payload = http.getString();
+
+        if (strstr(url, "open-meteo.com") != NULL) {
+            StaticJsonBuffer<1024> jsonBuffer;
+            JsonObject& root = jsonBuffer.parseObject(payload);
+
+            if (!root.success()) {
+                Serial.println("Falha ao analisar JSON da API 1.");
+                return false;
+            }
+
+            if (!root["current"]["temperature_2m"].is<float>() || 
+                !root["daily"]["sunrise"][0].is<unsigned long>() || 
+                !root["daily"]["sunset"][0].is<unsigned long>()) {
+                Serial.println("Campos ausentes ou inválidos na API 1.");
+                return false;
+            }
+
+            temp = root["current"]["temperature_2m"];
+            nascer = root["daily"]["sunrise"][0];
+            por = root["daily"]["sunset"][0];
+        } else if (strstr(url, "openweathermap.org") != NULL) {
+            StaticJsonBuffer<1024> jsonBuffer;
+            JsonObject& root = jsonBuffer.parseObject(payload);
+
+            if (!root.success()) {
+                Serial.println("Falha ao analisar JSON da API 2.");
+                return false;
+            }
+            if (!root["main"]["temp"].is<float>() || 
+                !root["sys"]["sunrise"].is<unsigned long>() || 
+                !root["sys"]["sunset"].is<unsigned long>()) {
+                Serial.println("Campos ausentes ou inválidos na API 2.");
+                return false;
+            }
+            temp = root["main"]["temp"];
+            nascer = root["sys"]["sunrise"];
+            por = root["sys"]["sunset"];
+        } else {
+            Serial.println("URL desconhecida.");
+            return false;
+        }
+        return validateData(temp, nascer, por);
+    }
+    Serial.printf("Erro na requisição HTTP. Código: %d\n", httpCode);
+    return false;
+}
+
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocketClient *client) {
   String message = String((char *)data).substring(0, len);
 
@@ -437,7 +709,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
     // Validar e salvar credenciais Wi-Fi
     if (validateAndSave("wifi_ssid", ssid) && validateAndSave("wifi_pass", password)) {
       client->text("feedback:Credenciais Wi-Fi salvas com sucesso.");
-	setupWiFi();
+	  setupWiFi();
     } else {
       client->text("feedback:Erro ao salvar credenciais Wi-Fi.");
     }
@@ -451,8 +723,12 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
       client->text("localIP: Sem Conecção á Internet.");
     }
   }
-
+ else if (message.startsWith("updateWeatherData")) {
+	checkAndUpdateData(true);
+    client->text("Atualização meteorológica manual iniciada.");
+	}
 }
+
 void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
   switch (type) {
     case WS_EVT_CONNECT:
@@ -496,7 +772,8 @@ void configurarRelays() {
 }
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(9600);
+  initGPS();
   unsigned long buildTimestamp = getBuildTimestamp();
   struct timeval tv = { .tv_sec = buildTimestamp, .tv_usec = 0 };
   settimeofday(&tv, nullptr);
@@ -565,6 +842,7 @@ void loop() {
     lastCheck = millis();
   }
 }
+
 void piscarLed() {
   static bool ledState = false;           // Estado atual do LED
   static unsigned long previousMillis = 0; // Tempo da última mudança do LED
@@ -722,10 +1000,42 @@ logMessage("Temperatura Configurada: " + String(galinheiro.temp_config));
     }
 }
 
+bool isValidTimestamp(time_t timestamp) {
+    // 1. Verificar se o timestamp é maior ou igual ao build timestamp
+    if (timestamp < getBuildTimestamp()) {
+        return false;
+    }
+    // 2. Verificar a quantidade de dígitos do timestamp
+    if (timestamp < 1000000000 || timestamp > 9999999999) {
+        return false;
+    }
+    // 3. Validar que o timestamp representa um horário plausível
+    struct tm *timeinfo = gmtime(&timestamp);
+    if (timeinfo == nullptr) {
+        return false;
+    }
+    if (timeinfo->tm_mon < 0 || timeinfo->tm_mon > 11) return false;      // Mês
+    if (timeinfo->tm_mday < 1 || timeinfo->tm_mday > 31) return false;    // Dia
+    if (timeinfo->tm_hour < 0 || timeinfo->tm_hour > 23) return false;    // Hora
+    if (timeinfo->tm_min < 0 || timeinfo->tm_min > 59) return false;      // Minuto
+    if (timeinfo->tm_sec < 0 || timeinfo->tm_sec > 59) return false;      // Segundo
+    return true; // Timestamp válido
+}
+
 bool validateData(float temp, unsigned long nascer, unsigned long por) {
-  if (temp < -20 || temp > 45) return false;
-  if (nascer >= por || (por - nascer) > 64800) return false;
-  return true;
+    // Validar temperatura
+    if (temp < -20 || temp > 45) return false;
+    // Validar timestamps de nascer e pôr do sol
+    if (!isValidTimestamp(nascer) || !isValidTimestamp(por)) {
+        Serial.println("Timestamps de nascer ou pôr do sol inválidos.");
+        return false;
+    }
+    // Verificar se nascer é anterior a pôr do sol e se a diferença não excede 18 horas
+    if (nascer >= por || (por - nascer) > 64800) {
+        Serial.println("Intervalo inválido entre nascer e pôr do sol.");
+        return false;
+    }
+    return true;
 }
 
 unsigned long getRTCTime() {
@@ -735,111 +1045,4 @@ unsigned long getRTCTime() {
     return 0;
   }
   return mktime(&timeinfo);
-}
-
-void checkAndUpdateData() {
-  // Obter o timestamp atual do RTC interno
-  unsigned long currentTime = getRTCTime();
-  if (currentTime == 0) {
-    Serial.println("Erro: Não foi possível obter o timestamp do RTC.");
-    return;
-  }
-
-  // Verificar se já se passaram 4 horas desde a última atualização
-  if (currentTime - galinheiro.last_update < 14400) { // 14400 segundos = 4 horas
-    return;
-  }
-
-  // Verificar conexão com a internet
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("Sem conexão com a internet. Atualizando apenas o timestamp da última verificação.");
-    galinheiro.last_update = currentTime;
-    validateAndSave("last_update", String(currentTime));
-    return;
-  }
-  adjustTimeZone();
-  syncRTCWithNTP(nullptr); // Sincronizar RTC com NTP sem cliente WebSocket
-  // Tentar obter dados de ambas as APIs
-  float temp;
-  unsigned long nascer, por;
-  bool dataValida = false;
-
-  if (fetchData(API_1, temp, nascer, por)) {
-    dataValida = validateData(temp, nascer, por);
-  }
-
-  if (!dataValida && fetchData(API_2, temp, nascer, por)) {
-    dataValida = validateData(temp, nascer, por);
-  }
-
-  // Se os dados forem válidos, atualizar a estrutura e salvar em memória
-  if (dataValida) {
-    galinheiro.temp_api = temp;
-    galinheiro.nascer = nascer;
-    galinheiro.por = por;
-    galinheiro.last_update = currentTime;
-
-    validateAndSave("temp_api", String(temp));
-    validateAndSave("nascer", String(nascer));
-    validateAndSave("por", String(por));
-    validateAndSave("last_update", String(currentTime));
-    horaPor = extrairHora(por);
-    horaNascer = extrairHora(nascer);
-    Serial.println("Dados atualizados e salvos com sucesso.");
-  } else {
-    // Atualizar apenas o timestamp da última verificação se os dados não forem válidos
-    Serial.println("Falha ao obter dados válidos de ambas as APIs. Apenas o timestamp foi atualizado.");
-    galinheiro.last_update = currentTime;
-    validateAndSave("last_update", String(currentTime));
-  }
-}
-
-bool fetchData(const char* url, float &temp, unsigned long &nascer, unsigned long &por) {
-  HTTPClient http;
-  http.begin(url);
-  int httpCode = http.GET();
-
-  if (httpCode == HTTP_CODE_OK) {
-    String payload = http.getString();
-
-    if (strstr(url, "open-meteo.com") != NULL) {
-      // Processar resposta da API 1 (Open-Meteo)
-      StaticJsonBuffer<1024> jsonBuffer;
-      JsonObject& root = jsonBuffer.parseObject(payload);
-
-      if (!root.success()) {
-        Serial.println("Falha ao analisar JSON da API 1.");
-        http.end();
-        return false;
-      }
-
-      temp = root["current"]["temperature_2m"].as<float>();
-      nascer = root["daily"]["sunrise"][0].as<unsigned long>();
-      por = root["daily"]["sunset"][0].as<unsigned long>();
-    } else if (strstr(url, "openweathermap.org") != NULL) {
-      // Processar resposta da API 2 (OpenWeatherMap)
-      StaticJsonBuffer<1024> jsonBuffer;
-      JsonObject& root = jsonBuffer.parseObject(payload);
-
-      if (!root.success()) {
-        Serial.println("Falha ao analisar JSON da API 2.");
-        http.end();
-        return false;
-      }
-
-      temp = root["main"]["temp"].as<float>();
-      nascer = root["sys"]["sunrise"].as<unsigned long>();
-      por = root["sys"]["sunset"].as<unsigned long>();
-    } else {
-      Serial.println("URL desconhecida.");
-      http.end();
-      return false;
-    }
-
-    http.end();
-    return validateData(temp, nascer, por);
-  }
-  Serial.printf("Erro na requisição HTTP. Código: %d\n", httpCode);
-  http.end();
-  return false;
 }
