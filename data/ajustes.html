@@ -112,6 +112,7 @@
         <input type="number" id="tcd" name="tcd" min="5" max="20">
         
         <button type="button" onclick="salvarAjustes()">Salvar Ajustes</button>
+		<button type="button" onclick="atualizarDadosMeteorologicos()">Atualizar Dados Meteorológicos</button>
         <a href="/" class="center-button">Voltar Página Inicial</a><br>
 		<div id="feedback">Feedback do sistema aparecerá aqui.</div>
     </form>
@@ -227,6 +228,16 @@
     };
     return friendlyNames[key] || key;
 }
+
+function atualizarDadosMeteorologicos() {
+    if (websocket.readyState === WebSocket.OPEN) {
+        websocket.send('updateWeatherData');
+        displayFeedback('Requisição para atualizar os dados meteorológicos enviada.', true);
+    } else {
+        displayFeedback('Falha ao conectar ao servidor. Verifique sua conexão.', false);
+    }
+}
+
     </script>
 </body>
 </html>
