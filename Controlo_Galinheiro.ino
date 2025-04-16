@@ -35,9 +35,6 @@ const int relayPinOpen = 25;        // Pino do relay para abrir a porta
 const int relayPinClose = 26;       // Pino do relay para fechar a porta
 const int ledPin = 23; // Define o pino do LED
 
-const char* API_1 = "http://api.open-meteo.com/v1/forecast?latitude=49.5677&longitude=5.8331&current=temperature_2m,is_day&daily=sunrise,sunset&timeformat=unixtime&timezone=Europe%2FBerlin&forecast_days=1";
-const char* API_2 = "http://api.openweathermap.org/data/2.5/weather?id=2803073&appid=751ff69d859cad7734e1a490975e0a61&units=metric";
-
 // Struct do Galinheiro
 struct Galinheiro {   // 11 elementos
   float temp_api;        // Temperatura atual recebida da API (intervalo: -25 a 45 graus Celsius)
