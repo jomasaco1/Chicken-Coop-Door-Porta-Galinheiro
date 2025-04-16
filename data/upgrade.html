@@ -4,231 +4,132 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Atualização OTA</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            background-color: #f4f4f9;
-        }
-        header {
-            background: #007bff;
-            color: white;
-            width: 100%;
-            padding: 10px 0;
-            text-align: center;
-        }
-        form {
-            background: white;
-            padding: 20px;
-            border-radius: 5px;
-            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-            width: 90%;
-            max-width: 500px;
-            text-align: center;
-        }
-        input, button {
-            margin-bottom: 15px;
-            padding: 10px;
-            width: 100%;
-            font-size: 16px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            box-sizing: border-box;
-        }
-        button {
-        color: white;
-        background: #007bff;
-        border: none;
-        cursor: pointer;
-        padding: 10px;
-        border-radius: 5px;
-        font-size: 16px;
-        width: 100%; /* Mantém o estilo atual */
-    }
-
-    .small-button {
-        width: auto; /* Ajusta para o tamanho do conteúdo */
-        display: inline-block;
-        margin: 0 auto;
-    }
-        .progress {
-            width: 100%;
-            background-color: #e9ecef;
-            border-radius: 5px;
-            overflow: hidden;
-            margin-bottom: 15px;
-        }
-        .progress-bar {
-            height: 20px;
-            background-color: #28a745;
-            width: 0;
-            text-align: center;
-            color: white;
-            line-height: 20px;
-        }
-        .feedback {
-            margin-top: 15px;
-            padding: 10px;
-            background: #f8f9fa;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            width: 90%;
-            max-width: 500px;
-            color: #333;
-        }
-        footer {
-            margin-top: 20px;
-            text-align: center;
-            font-size: 14px;
-            color: #666;
-        }
-    </style>
+        <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <header>
         <h1>Atualização OTA</h1>
     </header>
-    <form method="POST" action="/update" enctype="multipart/form-data" id="otaForm">
-        <input type="file" name="firmware" id="firmware">
-        <div class="progress" id="progressContainer">
-            <div class="progress-bar" id="progressBar">0%</div>
-        </div>
-        <button type="submit">Enviar Firmware</button>
-		</form>
-    <form method="POST" action="/upload" enctype="multipart/form-data" id="uploadForm">
-    <input type="file" name="file" id="fileInput">
-    <div class="progress" id="progressContainerFile">
-        <div class="progress-bar" id="progressBarFile">0%</div>
+	    <div class="container">
+<form method="POST" action="/upload" enctype="multipart/form-data" id="uploadForm">
+    <label for="fileInput">Selecione um ficheiro:</label>
+    <input 
+        type="file" 
+        name="file" 
+        id="fileInput" 
+        accept=".bin, .html, .css, .js" 
+        placeholder="Selecione um ficheiro" 
+        required
+    >
+    <div class="progress" id="progressContainer">
+        <div class="progress-bar" id="progressBar">0%</div>
     </div>
     <button type="submit">Enviar Arquivo</button>
-</form>
-
-<button type="button" class="small-button" onclick="voltarPaginaInicial()">Voltar à Página Inicial</button>
     <div id="feedback" class="feedback"></div>
+	</form>
+	<button type="button" class="small-button" onclick="resetESP32()"><em>Reiniciar Sistema</em><br></button>
+<button type="button" class="small-button" onclick="voltarPaginaInicial()">Voltar à Página Inicial</button>
+</div>
     <footer>
         <p>Autor: <span id="author">Carregando...</span> | Versão: <span id="version">Carregando...</span></p>
     </footer>
 
     <script>
-        const otaForm = document.getElementById('otaForm');
-        const firmwareInput = document.getElementById('firmware');
-        const progressBar = document.getElementById('progressBar');
         const progressContainer = document.getElementById('progressContainer');
         const feedback = document.getElementById('feedback');
         const authorSpan = document.getElementById('author');
         const versionSpan = document.getElementById('version');
 		const uploadForm = document.getElementById('uploadForm');
-		const fileInput = document.getElementById('fileInput');
-		const progressBarFile = document.getElementById('progressBarFile');
-		const progressContainerFile = document.getElementById('progressContainerFile');
+		let heartbeatInterval;
+		let startTime;
+		let ws;
 
-        // Inicializa conexão WebSocket
-        const isSecure = window.location.protocol === 'https:';
-        const ws = new WebSocket(`${isSecure ? 'wss' : 'ws'}://${window.location.hostname}/ws`);
+function initWebSocket() {
+    ws = new WebSocket(`ws://${window.location.hostname}:${window.location.port}/ws`);
 
-        ws.onopen = () => {
-            feedback.textContent = "WebSocket conectado.";
-            feedback.style.color = "green";
-            ws.send('info:'); // Solicita informações de versão e autor
-        };
-
-        ws.onmessage = (event) => {
-            const message = event.data;
-            if (message.startsWith('autversion:')) {
-                const [author, version] = message.replace('autversion:', '').split('|').map(s => s.trim());
-                authorSpan.textContent = author;
-                versionSpan.textContent = version;
-            } else {
-                console.log("Mensagem desconhecida:", message);
+    ws.onopen = () => {
+        addFeedback("WebSocket conectado.", "green");
+        ws.send('info:'); // Solicita informações de versão e autor
+		clearInterval(heartbeatInterval);
+        heartbeatInterval = setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send('ping');
             }
-        };
+        }, 10000);
+    };
 
-        ws.onerror = (error) => {
-            feedback.textContent = "Erro no WebSocket. Verifique a conexão.";
-            feedback.style.color = "red";
-            console.error("WebSocket Error:", error);
-        };
+    ws.onmessage = (event) => {
+	        console.log("Mensagem do WebSocket:", event.data);
+        if (event.data === 'pong') {
+            console.log('Conexão ativa (heartbeat recebido).');
+        } else if (event.data.startsWith('autversion:')) {
+            const [author, version] = event.data.replace('autversion:', '').split('|').map(s => s.trim());
+            authorSpan.textContent = author || 'Desconhecido';
+            versionSpan.textContent = version || 'Indisponível';
+        } else {
+            addFeedback(event.data);
+        }
+    };
 
-        ws.onclose = () => {
-            feedback.textContent = "WebSocket desconectado.";
-            feedback.style.color = "orange";
-        };
+    ws.onerror = (error) => {
+        addFeedback("Erro: no WebSocket. Verifique a conexão.", "red");
+    };
 
-        otaForm.addEventListener('submit', (event) => {
-            event.preventDefault();
+    ws.onclose = () => {
+        addFeedback("WebSocket desconectado. Tentando reconectar...", "orange");
+        clearInterval(heartbeatInterval);
+        setTimeout(initWebSocket, 3000);
+    };
+}
+document.addEventListener("DOMContentLoaded", () => {
+    initWebSocket();
+});
 
-            if (!firmwareInput.files.length) {
-                feedback.textContent = "Por favor, selecione um arquivo.";
-                feedback.style.color = "red";
-                return;
+function addFeedback(message, color = "black") {
+            const feedbackDiv = document.getElementById('feedback');
+            const newMessage = document.createElement('p');
+            newMessage.innerText = message;
+            newMessage.style.color = color;
+            feedbackDiv.appendChild(newMessage);
+
+            while (feedbackDiv.childNodes.length > 5) {
+                feedbackDiv.removeChild(feedbackDiv.childNodes[0]);
             }
+        }
 
-            const file = firmwareInput.files[0];
-
-            // Valida se o arquivo tem extensão .bin
-            if (!file.name.endsWith('.bin')) {
-                feedback.textContent = "Arquivo inválido. Por favor, envie um arquivo .bin.";
-                feedback.style.color = "red";
-                return;
-            }
-
-            const formData = new FormData();
-            formData.append('firmware', file);
-
-            const xhr = new XMLHttpRequest();
-            xhr.open('POST', '/update', true);
-
-            xhr.upload.onprogress = (event) => {
-                if (event.lengthComputable) {
-                    const percentComplete = Math.round((event.loaded / event.total) * 100);
-                    progressBar.style.width = percentComplete + '%';
-                    progressBar.textContent = percentComplete + '%';
-                }
-            };
-
-            xhr.onload = () => {
-                if (xhr.status === 200) {
-                    feedback.textContent = "Atualização concluída com sucesso! Reiniciando...";
-                    feedback.style.color = "green";
-                } else {
-                    feedback.textContent = "Falha na atualização: " + xhr.responseText;
-                    feedback.style.color = "red";
-                }
-            };
-
-            xhr.onerror = () => {
-                feedback.textContent = "Erro ao enviar o arquivo. Tente novamente.";
-                feedback.style.color = "red";
-            };
-
-            feedback.textContent = "Enviando o firmware...";
-            feedback.style.color = "blue";
-            xhr.send(formData);
-        });
-		
-		uploadForm.addEventListener('submit', (event) => {
+    document.getElementById('uploadForm').addEventListener('submit', (event) => {
     event.preventDefault();
 
-    if (!fileInput.files.length) {
-        feedback.textContent = "Por favor, selecione um arquivo.";
-        feedback.style.color = "red";
+    const fileInput = document.getElementById('fileInput');
+    const file = fileInput.files[0];
+    const progressBar = document.getElementById('progressBar');
+
+    if (!file) {
+	addFeedback("Erro: Nome firmware inválido!", "red");
         return;
     }
 
-    const file = fileInput.files[0];
-    if (!file.name.endsWith('.html') && !file.name.endsWith('.css') && !file.name.endsWith('.js')) {
-        feedback.textContent = "Tipo de arquivo inválido. Somente .html, .css e .js são permitidos.";
-        feedback.style.color = "red";
+    // Validação do nome do firmware
+    if (file.name.endsWith(".bin") && !file.name.startsWith("Controlo_Galinheiro")) {
+        addFeedback("Erro: Nome firmware inválido!.", "red");
         return;
     }
+
+    // Validação do tipo de arquivo
+    if (!file.name.endsWith(".bin") && !file.name.endsWith(".html") && !file.name.endsWith(".css") && !file.name.endsWith(".js")) {
+        addFeedback("Erro: Tipo de arquivo não suportado.", "red");
+        return;
+    }
+
+	addFeedback(`Enviando arquivo: ${file.name}...`, "blue");
     const formData = new FormData();
     formData.append('file', file);
+	
+	const maxFileSize = 2048576; // 2 MB (ajuste conforme necessário)
+if (file.size > maxFileSize) {
+    addFeedback("Erro: O arquivo é muito grande.", "red");
+    return;
+}
 
     const xhr = new XMLHttpRequest();
     xhr.open('POST', '/upload', true);
@@ -236,32 +137,46 @@
     xhr.upload.onprogress = (event) => {
         if (event.lengthComputable) {
             const percentComplete = Math.round((event.loaded / event.total) * 100);
-            progressBarFile.style.width = percentComplete + '%';
-            progressBarFile.textContent = percentComplete + '%';
+			if (percentComplete < 50) {
+    progressBar.style.backgroundColor = "#ffcc00"; // Amarelo para progresso inicial
+} else if (percentComplete < 100) {
+    progressBar.style.backgroundColor = "#007bff"; // Azul para progresso intermediário
+} else {
+    progressBar.style.backgroundColor = "#28a745"; // Verde para conclusão
+}
+            progressBar.style.width = percentComplete + '%';
+            progressBar.textContent = percentComplete + '%';
+            addFeedback(`Enviando: ${file.name} (${percentComplete}%)`, "blue");
         }
     };
 
     xhr.onload = () => {
         if (xhr.status === 200) {
-            feedback.textContent = "Upload concluído com sucesso!";
-            feedback.style.color = "green";
-        } else {
-            feedback.textContent = "Falha no upload: " + xhr.responseText;
-            feedback.style.color = "red";
+            addFeedback("Upload concluído com sucesso!", "green");
+        } else if (xhr.status === 200 && file.name.endsWith(".bin")) {
+    addFeedback("Atualização concluída. O dispositivo está reiniciando em 3s...", "green");
+    setTimeout(() => {
+        window.location.reload(); // Recarregar a página após reinicialização
+    }, 3000); // 10 segundos
+} 
+		else {
+            addFeedback("Erro: " + xhr.responseText, "red");
         }
     };
 
     xhr.onerror = () => {
-        feedback.textContent = "Erro ao enviar o arquivo. Tente novamente.";
-        feedback.style.color = "red";
+                addFeedback("Erro ao enviar o arquivo.", "red");
     };
 
-    feedback.textContent = "Enviando o arquivo...";
-    feedback.style.color = "blue";
     xhr.send(formData);
 });
+
 		function voltarPaginaInicial() {
             window.location.href = '/';
+        }
+		
+		function resetESP32() {
+            ws.send('reset:');
         }
     </script>
 </body>

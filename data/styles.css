@@ -1,0 +1,128 @@
+/* Estilos Globais */
+:root {
+    --primary-color: #007bff;
+    --secondary-color: #0056b3;
+    --background-color: #f4f4f9;
+    --text-color: #333;
+    --success-color: #28a745;
+    --error-color: #dc3545;
+    --warning-color: #ffc107;
+}
+
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    overflow-x: hidden;
+}
+
+header {
+    background: var(--primary-color);
+    color: white;
+    width: 100%;
+    padding: 10px 0;
+    text-align: center;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.container, form, .info-box, .config-box {
+    background: white;
+    padding: 20px;
+    border-radius: 5px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    width: 90%;
+    max-width: 500px;
+    margin: 20px 0;
+}
+
+input, button {
+    margin-bottom: 10px;
+    padding: 10px;
+    width: calc(100% - 22px);
+    font-size: 16px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    box-sizing: border-box;
+}
+
+button {
+    color: white;
+    background: var(--primary-color);
+    border: none;
+    cursor: pointer;
+    transition: background 0.3s, transform 0.2s;
+}
+
+button:hover {
+    background: var(--secondary-color);
+    transform: scale(1.05);
+}
+
+button:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+}
+
+.center-button, .small-button {
+    display: inline-block;
+    padding: 10px 20px;
+    font-size: 16px;
+    color: white;
+    background: var(--primary-color);
+    border-radius: 5px;
+    text-decoration: none;
+    text-align: center;
+}
+
+.center-button:hover, .small-button:hover {
+    background: var(--secondary-color);
+}
+
+#feedback, #messages, .status {
+    background: #f8f9fa;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    padding: 10px;
+    color: var(--text-color);
+    width: 100%;
+    max-width: 500px;
+    margin-bottom: 20px;
+}
+
+.progress {
+    width: 100%;
+    background-color: #e9ecef;
+    border-radius: 5px;
+    overflow: hidden;
+}
+
+.progress-bar {
+    height: 20px;
+    background-color: var(--success-color);
+    width: 0;
+    text-align: center;
+    color: white;
+    line-height: 20px;
+}
+
+/* Responsividade */
+@media (max-width: 600px) {
+    .container, form {
+        width: 95%;
+        padding: 10px;
+    }
+    button {
+        font-size: 14px;
+        padding: 8px 16px;
+    }
+    #feedback, #messages, .info-box, .config-box {
+        padding: 10px;
+    }
+}

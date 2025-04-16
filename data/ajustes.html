@@ -4,93 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ajustes do Galinheiro</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 0;
-            background-color: #f4f4f9;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            overflow-x: hidden;
-        }
-        header {
-            background: #007bff;
-            color: white;
-            width: 100%;
-            padding: 10px 0;
-            text-align: center;
-        }
-        form {
-            background: white;
-            padding: 20px;
-            border-radius: 5px;
-            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-            width: 90%;
-            max-width: 500px;
-        }
-        input {
-            margin-bottom: 10px;
-            padding: 10px;
-            width: calc(100% - 22px);
-            font-size: 16px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-        }
-        button {
-            padding: 10px 20px;
-            font-size: 16px;
-            color: white;
-            background: #007bff;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-        }
-        button:hover {
-            background: #0056b3;
-        }
-        #feedback {
-            margin-top: 20px;
-            padding: 10px;
-            background: #f8f9fa;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            width: 100%;
-            max-width: 500px;
-            color: #333;
-        }
-        .center-button {
-            display: inline-block;
-            padding: 10px 20px;
-            font-size: 16px;
-            color: white;
-            background: #007bff;
-            border-radius: 5px;
-            text-decoration: none;
-            text-align: center;
-        }
-        .center-button:hover {
-            background: #0056b3;
-        }
-
-        @media (max-width: 400px) {
-            form {
-                width: 100%;
-                padding: 10px;
-            }
-            input {
-                font-size: 14px;
-                padding: 8px;
-            }
-            button {
-                font-size: 14px;
-                padding: 8px 16px;
-            }
-        }
-    </style>
+        <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <header>
@@ -113,12 +27,13 @@
         
         <button type="button" onclick="salvarAjustes()">Salvar Ajustes</button>
 		<button type="button" onclick="atualizarDadosMeteorologicos()">Atualizar Dados Meteorológicos</button>
+		
         <a href="/" class="center-button">Voltar Página Inicial</a><br>
 		<div id="feedback">Feedback do sistema aparecerá aqui.</div>
     </form>
 
     <script>
-        const gateway = `ws://${window.location.hostname}/ws`;
+			const gateway = `ws://${window.location.hostname}:${window.location.port}/ws`;
         let websocket;
         let ajustesIniciais = {}; // Armazena os valores iniciais
         let reconnectAttempts = 0;
@@ -133,29 +48,42 @@
             websocket = new WebSocket(gateway);
 
             websocket.onopen = () => {
-                console.log('Conectado ao WebSocket');
+                addFeedback("Conectado ao WebSocket", "green");
                 reconnectAttempts = 0; // Resetar tentativas de reconexão
             };
 
             websocket.onclose = () => {
-                console.log('WebSocket desconectado');
+                addFeedback("WebSocket desconectado. Tentando reconectar...", "orange");
                 if (reconnectAttempts < maxReconnectAttempts) {
                     setTimeout(initWebSocket, 2000 * Math.pow(2, reconnectAttempts)); // Exponential backoff
                     reconnectAttempts++;
                 } else {
-                    displayFeedback('Falha ao reconectar ao WebSocket.', false);
+                    addFeedback('Falha ao reconectar ao WebSocket.', "red");
                 }
             };
 
             websocket.onerror = (error) => {
                 console.error('Erro no WebSocket:', error);
-                displayFeedback('Erro de conexão com o WebSocket.', false);
+                addFeedback('Erro de conexão com o WebSocket.', "red");
             };
 
             websocket.onmessage = (event) => handleServerMessage(event.data);
         }
+		
+		function addFeedback(message, color = "black") {
+            const feedbackDiv = document.getElementById('feedback');
+            const newMessage = document.createElement('p');
+            newMessage.innerText = message;
+            newMessage.style.color = color;
+            feedbackDiv.appendChild(newMessage);
+
+            while (feedbackDiv.childNodes.length > 5) {
+                feedbackDiv.removeChild(feedbackDiv.childNodes[0]);
+            }
+        }
 
         function handleServerMessage(message) {
+		                console.log('Mensagem handleServerMessage:', message);
             if (message.startsWith('ajustes:')) {
                 const ajustes = message.replace('ajustes:', '').split(',');
                 ajustes.forEach(ajuste => {
@@ -168,16 +96,15 @@
                 });
             } else if (message.startsWith('Ajuste salvo:')) {
                 const [key, value] = message.replace('Ajuste salvo: ', '').split(' = ');
-                displayFeedback(`Ajuste salvo com sucesso: ${getFriendlyName(key)} = ${value}`, true);
+                addFeedback(`Ajuste salvo com sucesso: ${getFriendlyName(key)} = ${value}`, "green");
             } else if (message.startsWith('Erro ao salvar ajuste:')) {
                 const key = message.replace('Erro ao salvar ajuste: ', '');
-                displayFeedback(`Erro ao salvar: ${getFriendlyName(key)}`, false);
+                addFeedback(`Erro ao salvar: ${getFriendlyName(key)}`, "red");
             } else if (message.startsWith('Formato inválido para ajuste:')) {
                 const ajuste = message.replace('Formato inválido para ajuste: ', '');
-                displayFeedback(`Formato inválido para o ajuste: ${ajuste}`, false);
+                addFeedback(`Formato inválido para o ajuste: ${ajuste}`, "red");
             } else {
-                console.log('Mensagem desconhecida:', message);
-                displayFeedback(`Mensagem desconhecida: ${message}`, false);
+                addFeedback('Mensagem desconhecida: ' + message, "red");
             }
         }
 
@@ -193,7 +120,7 @@
                     const valor = parseFloat(input.value);
 
                     if (isNaN(valor) || valor < min || valor > max) {
-                        displayFeedback(`Erro: ${key} fora do intervalo (${min} - ${max})`, false);
+                        addFeedback(`Erro: ${key} fora do intervalo (${min} - ${max})`, "red");
                         todosValidos = false;
                         break;
                     }
@@ -206,18 +133,12 @@
 
             if (todosValidos && ajustesModificados.length > 0) {
                 ajustesModificados.forEach(ajuste => websocket.send(ajuste));
-                console.log("Ajustes enviados:", ajustesModificados);
+                addFeedback("Ajustes enviados:" + ajustesModificados, "blue");
             } else if (todosValidos) {
-                displayFeedback("Nenhum ajuste foi modificado.", false);
+                addFeedback("Nenhum ajuste foi modificado.", "red");
             }
         }
 
-        function displayFeedback(message, success) {
-            const feedback = document.getElementById('feedback');
-            feedback.textContent = message;
-            feedback.style.color = success ? 'green' : 'red';
-            setTimeout(() => feedback.textContent = '', 5000); // Limpar feedback após 5 segundos
-        }
 		function getFriendlyName(key) {
     const friendlyNames = {
         temp_config: "Temperatura mínima de trabalho",
@@ -232,9 +153,9 @@
 function atualizarDadosMeteorologicos() {
     if (websocket.readyState === WebSocket.OPEN) {
         websocket.send('updateWeatherData');
-        displayFeedback('Requisição para atualizar os dados meteorológicos enviada.', true);
+        addFeedback('Requisição para atualizar os dados meteorológicos enviada.', "green");
     } else {
-        displayFeedback('Falha ao conectar ao servidor. Verifique sua conexão.', false);
+        addFeedback('Falha ao conectar ao servidor. Verifique sua conexão.', "red");
     }
 }
 

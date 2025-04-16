@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debug do Sistema</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        /* Estilo básico para o log */
+        #messages {
+            height: 400px;
+            overflow-y: scroll;
+            border: 1px solid #ccc;
+            padding: 10px;
+            font-family: Arial, sans-serif;
+            color: #333;
+            background-color: #f9f9f9;
+        }
+        #messages p {
+            margin: 5px 0;
+        }
+        .info {
+            color: green;
+        }
+        .warning {
+            color: orange;
+        }
+        .error {
+            color: red;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Debug do Sistema</h1>
+    </header>
+    <div class="container">
+        <div id="messages">
+            <p>Esperando mensagens...</p>
+        </div>
+    </div>
+
+    <script>
+       const gateway = `ws://${window.location.hostname}/ws`; // WebSocket URL do ESP32
+let websocket;
+let messageContainer = document.getElementById('messages');
+const maxMessages = 100; // Limite máximo de mensagens exibidas
+
+window.addEventListener('load', () => {
+    initWebSocket();
+});
+
+function initWebSocket() {
+    websocket = new WebSocket(gateway);
+
+    websocket.onopen = () => {
+        addMessage('Conectado ao servidor de WebSocket...');
+    };
+
+    websocket.onmessage = (event) => {
+        handleIncomingMessage(event.data);
+    };
+
+    websocket.onclose = () => {
+        addMessage('Desconectado do WebSocket.', 'warning');
+    };
+
+    websocket.onerror = (error) => {
+        addMessage('Erro no WebSocket: ' + error, 'error');
+    };
+}
+
+// Lógica para lidar com diferentes tipos de mensagens
+function handleIncomingMessage(message) {
+    // Verifica se a mensagem contém "Erro", "Alerta" ou "Info" para definir a cor automaticamente
+    if (message.toLowerCase().includes("erro") || message.toLowerCase().includes("falha")) {
+        addMessage(message, 'error');
+    } else if (message.toLowerCase().includes("aviso") || message.toLowerCase().includes("atenção")) {
+        addMessage(message, 'warning');
+    } else {
+        addMessage(message, 'info');
+    }
+}
+
+// Função para adicionar mensagens ao log
+function addMessage(message, type = 'info') {
+    const newMessage = document.createElement('p');
+    newMessage.innerText = message;
+    newMessage.className = type; // Define a classe CSS baseada no tipo da mensagem
+    messageContainer.appendChild(newMessage);
+
+    // Remover mensagens antigas quando atingir o limite
+    if (messageContainer.childNodes.length > maxMessages) {
+        messageContainer.removeChild(messageContainer.firstChild);
+    }
+
+    // Rolar automaticamente para a última mensagem
+    messageContainer.scrollTop = messageContainer.scrollHeight;
+}
+    </script>
+</body>
+</html>

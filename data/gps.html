@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Estado do GPS</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <h1>Estado do GPS</h1>
+    </header>
+    
+    <div class="info-box">
+        <h2>Dados em Tempo Real</h2>
+        <p>Latitude: <a id="latitudeLink" href="#" target="_blank"><span id="latitude">Carregando...</span></a></p>
+        <p>Longitude: <span id="longitude">Carregando...</span></p>
+        <p id="altitudeContainer">Altitude: <span id="altitude">Carregando...</span></p>
+        <p>Satélites Visíveis: <span id="satellites">Carregando...</span></p>
+        <p>HDOP: <span id="hdop">Carregando...</span></p>
+        <p>Data GPS: <span id="gpsDate">Carregando...</span></p>
+        <p>Hora GPS: <span id="gpsTime">Carregando...</span></p>
+        <p id="timeAgeContainer">Última Atualização GNSS: <span id="timeAge">Carregando...</span></p>
+        <p class="status" id="status">Status do GPS: Aguardando dados...</p>
+    </div>
+    
+    <div class="config-box">
+        <h2>Comandos para o GPS</h2>
+        
+        <!-- Formulário de Seleção de Comando -->
+        <form id="gpsCommandForm">
+            <label for="comandoSelecionado">Selecione um comando:</label>
+            <select id="comandoSelecionado" onchange="mostrarCampos()">
+                <option value="">Selecione...</option>
+                <option value="AT+CGPS=1">Ativar saída de dados (Ativar GPS)</option>
+                <option value="AT+CGPS=0">Desativar saída de dados (Desativar GPS)</option>
+                <option value="AT+BAUD">Configurar Baud Rate (9600, 115200, etc.)</option>
+                <option value="AT+UPDATERATE">Configurar taxa de atualização (1Hz, 5Hz, etc.)</option>
+                <option value="AT+TIMEOUT">Configurar Timeout (tempo de espera para fixo)</option>
+                <option value="AT+MODE">Configurar Modo de Operação</option>
+            </select>
+        
+            <!-- Campo para inserir valores numéricos -->
+            <div id="campoValor" style="display:none;">
+                <label for="valorCampo">Digite o valor:</label>
+                <input type="text" id="valorCampo" placeholder="Digite o valor">
+            </div>
+        
+            <!-- Campo para escolher entre Alta Precisão ou Baixo Consumo -->
+            <div id="campoModo" style="display:none;">
+                <label for="modoSelecionado">Escolha o modo:</label>
+                <select id="modoSelecionado">
+                    <option value="1">Alta Precisão</option>
+                    <option value="0">Baixo Consumo</option>
+                </select>
+            </div>
+        
+            <button type="button" onclick="enviarComandoGPS()">Enviar Comando</button>
+        </form>        
+
+        <button id="fixButton" onclick="configurarComoFixo()">Configurar como Fixo</button>
+        <button onclick="restaurarGPS()">Restaurar Valores de Fábrica</button>
+        <button type="button" onclick="voltarPaginaInicial()">Voltar à Página Inicial</button>
+        <button type="button" onclick="voltarPaginaConfig()">Voltar à Página Config</button>
+    </div>
+
+    <script>
+        const gateway = `ws://${window.location.hostname}:${window.location.port}/ws`;
+        let websocket;
+
+        window.addEventListener('load', () => {
+            initWebSocket();
+        });
+
+        function initWebSocket() {
+            websocket = new WebSocket(gateway);
+            websocket.onopen = () => {
+                console.log('WebSocket conectado.');
+                websocket.send('obterDadosGPS');
+            };
+            websocket.onmessage = (event) => processarDados(event.data);
+            websocket.onclose = () => setTimeout(initWebSocket, 2000);
+        }
+
+        function processarDados(data) {
+            console.log("Mensagem recebida dos dados GPS.", data);
+
+            const pares = data.split(',');
+            const valores = {};
+            pares.forEach(par => {
+                const separadorIndex = par.indexOf(':'); // Localiza o primeiro ':' na string
+                if (separadorIndex !== -1) {
+                    const chave = par.substring(0, separadorIndex).trim(); // Obtém a chave antes do primeiro ':'
+                    const valor = par.substring(separadorIndex + 1).trim(); // Obtém o valor após o primeiro ':'
+                    valores[chave] = valor;
+                }
+            });
+
+            const latitude = valores.latitude || 'N/A';
+            const longitude = valores.longitude || 'N/A';
+            const latitudeLink = document.getElementById('latitudeLink');
+            const satellites = valores.satellites || '0';
+            const hdop = valores.hdop || '0.00';
+            const gpsDateRaw = valores.date || 'N/A';
+            const gpsTimeRaw = valores.time || 'N/A';
+            const isFixed = valores.isFixed === 'true';
+            const altitude = valores.altitude || 'N/A';
+            const timeAge = valores.age || 'N/A';
+            const hdopValue = parseFloat(valores.hdop) || 99.99;
+
+            let gpsTime = gpsTimeRaw;
+
+            let gpsDate = gpsDateRaw;
+            if (gpsDateRaw !== 'N/A') {
+                const [month, day, year] = gpsDateRaw.split('/');
+                gpsDate = `${day.padStart(2, '0')}/${month.padStart(2, '0')}/${year}`;
+            }
+
+            if (gpsTimeRaw !== 'N/A') {
+                console.log("gpsTimeRaw recebido:", gpsTimeRaw);
+                const timeParts = gpsTimeRaw.split(':');
+                const hour = timeParts[0] ? timeParts[0].padStart(2, '0') : "00";
+                const minute = timeParts[1] ? timeParts[1].padStart(2, '0') : "00";
+                const second = timeParts[2] ? timeParts[2].padStart(2, '0') : "00";
+                gpsTime = `${hour}:${minute}:${second}`;
+            } else {
+                gpsTime = 'N/A';
+            }
+
+            if (altitude !== 'N/A') {
+                document.getElementById('altitude').innerText = `${altitude} m`;
+            } else {
+                document.getElementById('altitudeContainer').style.display = 'none';
+            }
+
+            if (timeAge !== 'N/A' && timeAge < 2000) {
+                document.getElementById('timeAge').innerText = ` ${timeAge} ms atrás`;
+            } else {
+                document.getElementById('timeAgeContainer').style.display = 'none';
+            }
+
+            const statusElement = document.getElementById('status');
+            if (satellites === '0') {
+                statusElement.innerText = 'Status do GPS: Sem satélites visíveis.';
+                statusElement.style.color = 'red';
+            } else if (hdopValue < 1.0) {
+                statusElement.innerText = 'Status do GPS: Operacional (Sinal: Excelente)';
+                statusElement.style.color = 'green';
+            } else if (hdopValue < 2.0) {
+                statusElement.innerText = 'Status do GPS: Operacional (Sinal: Bom)';
+                statusElement.style.color = 'orange';
+            } else {
+                statusElement.innerText = 'Status do GPS: Operacional (Sinal: Ruim)';
+                statusElement.style.color = 'red';
+            }
+
+            document.getElementById('latitude').innerText = latitude;
+            document.getElementById('longitude').innerText = longitude;
+            if (latitude !== 'N/A' && longitude !== 'N/A' && !isNaN(latitude) && !isNaN(longitude)) {
+                latitudeLink.href = `https://www.google.com/maps?q=${latitude},${longitude}`;
+                latitudeLink.style.pointerEvents = 'auto';
+            } else {
+                latitudeLink.href = '#';
+                latitudeLink.style.pointerEvents = 'none';
+            }
+            document.getElementById('satellites').innerText = satellites;
+            document.getElementById('hdop').innerText = hdop;
+            document.getElementById('gpsDate').innerText = gpsDate;
+            document.getElementById('gpsTime').innerText = gpsTime;
+
+            const fixButton = document.getElementById('fixButton');
+            if (isFixed) {
+                fixButton.style.display = 'none';
+            } else {
+                fixButton.style.display = 'block';
+            }
+        }
+
+        function mostrarCampos() {
+    const comandoSelecionado = document.getElementById('comandoSelecionado').value;
+    const campoValor = document.getElementById('campoValor');
+    const campoModo = document.getElementById('campoModo');
+
+    // Esconder todos os campos por padrão
+    campoValor.style.display = 'none';
+    campoModo.style.display = 'none';
+
+    // Exibir campo de valor quando necessário
+    if (comandoSelecionado === 'AT+BAUD' || comandoSelecionado === 'AT+UPDATERATE' || comandoSelecionado === 'AT+TIMEOUT') {
+        campoValor.style.display = 'block';
+    }
+
+    // Exibir seleção de modo para AT+MODE
+    if (comandoSelecionado === 'AT+MODE') {
+        campoModo.style.display = 'block';
+    }
+}
+
+function enviarComandoGPS() {
+    const comandoSelecionado = document.getElementById('comandoSelecionado').value;
+    const valorCampo = document.getElementById('valorCampo').value;
+    const modoSelecionado = document.getElementById('modoSelecionado').value;
+
+    if (comandoSelecionado === '') {
+        alert('Por favor, selecione um comando.');
+        return;
+    }
+
+    let comandoFinal = comandoSelecionado;
+
+    // Se for um comando que precisa de valor numérico
+    if (valorCampo.trim() !== '' && comandoSelecionado !== 'AT+MODE') {
+        if (isNaN(valorCampo)) {
+            alert('O valor inserido não é válido.');
+            return;
+        }
+        comandoFinal += `=${valorCampo}`;
+    }
+
+    // Se for AT+MODE, adicionar o valor selecionado (1 para Alta Precisão, 0 para Baixo Consumo)
+    if (comandoSelecionado === 'AT+MODE') {
+        comandoFinal += `=${modoSelecionado}`;
+    }
+
+    // Enviar o comando via WebSocket
+    websocket.send(`comandoGPS:${comandoFinal}`);
+    alert(`Comando enviado: ${comandoFinal}`);
+
+    // Limpar campos
+    document.getElementById('valorCampo').value = '';
+}
+
+        function configurarComoFixo() {
+            websocket.send('configurarFixo');
+            alert('Comando para configurar GPS como fixo enviado.');
+        }
+
+        function restaurarGPS() {
+            websocket.send('restaurarGPS');
+            alert('Comando para restaurar valores de fábrica enviado.');
+        }
+
+        function voltarPaginaInicial() {
+            window.location.href = '/';
+        }
+
+        function voltarPaginaConfig() {
+            window.location.href = '/config';
+        }
+    </script>
+</body>
+</html>
